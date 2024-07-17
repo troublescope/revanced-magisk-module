@@ -1,4 +1,5 @@
 name: Build Modules
+
 on:
   workflow_call:
     inputs:
@@ -6,13 +7,13 @@ on:
         type: boolean
         required: false
         default: true
-
   workflow_dispatch:
 
 jobs:
   run:
     permissions: write-all
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/setup-java@v4
         with:
@@ -45,7 +46,10 @@ jobs:
           echo "NEXT_VER_CODE=$((TAG + 1))" >> $GITHUB_OUTPUT
 
       - name: Build modules/APKs
-        run: ./build.sh config.toml
+        id: build_modules
+        run: |
+          ./build.sh config.toml
+          echo "::set-output name=build_path::$(pwd)/build"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: $GITHUB_REPOSITORY
@@ -65,7 +69,7 @@ jobs:
         with:
           body: ${{ steps.get_output.outputs.BUILD_LOG }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ./build/*
+          file: ${{ steps.build_modules.outputs.build_path }}/*
           release_name: ReVanced
           tag: ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}
           file_glob: true
@@ -76,16 +80,17 @@ jobs:
         run: |
           git checkout -f update || git switch --discard-changes --orphan update
           cp -f build.tmp build.md
+
           get_update_json() {
             echo "{
-            \"version\": \"$1\",
-            \"versionCode\": ${{ steps.next_ver_code.outputs.NEXT_VER_CODE}},
-            \"zipUrl\": \"$2\",
-            \"changelog\": \"https://raw.githubusercontent.com/$GITHUB_REPOSITORY/update/build.md\"
-          }"
+              \"version\": \"$1\",
+              \"versionCode\": ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }},
+              \"zipUrl\": \"$2\",
+              \"changelog\": \"https://raw.githubusercontent.com/$GITHUB_REPOSITORY/update/build.md\"
+            }"
           }
 
-          cd build || { echo "build folder not found"; exit 1; }
+          cd ${{ steps.build_modules.outputs.build_path }} || { echo "build folder not found"; exit 1; }
           for OUTPUT in *magisk*.zip; do
             [ "$OUTPUT" = "*magisk*.zip" ] && continue
             ZIP_S=$(unzip -p "$OUTPUT" module.prop)
@@ -112,9 +117,10 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
         if: env.TG_TOKEN != null
         run: |
-          cd build || { echo "build folder not found"; exit 1; }
+          cd ${{ steps.build_modules.outputs.build_path }} || { echo "build folder not found"; exit 1; }
 
           TG_CHAT="@rvc_magisk"
+          THREAD_ID=20863
           NL=$'\n'
           APKS=""
           MODULES=""
@@ -144,4 +150,10 @@ jobs:
           echo "'$MSG'"
           MSG=${MSG:0:9450}
           POST="https://api.telegram.org/bot${TG_TOKEN}/sendMessage"
-          curl -X POST --data-urlencode "parse_mode=Markdown" --data-urlencode "disable_web_page_preview=true" --data-urlencode "text=${MSG}" --data-urlencode "chat_id=${TG_CHAT}" "$POST"
+          curl -X POST \
+            --data-urlencode "parse_mode=Markdown" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=${MSG}" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "message_thread_id=${THREAD_ID}" \
+            "$POST"
